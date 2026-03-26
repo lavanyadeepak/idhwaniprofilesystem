@@ -9,6 +9,11 @@
  *  4. Highlights rendered as proper bullet lists in both PDF and Word
  */
 
+// Determine context: CLI, Web UI Include, or Web Export Request
+$isCli = (php_sapi_name() === 'cli');
+$format = $_GET['format'] ?? null;
+$isExportRequest = in_array($format, ['pdf', 'docx']);
+
 require_once __DIR__ . '/vendor/autoload.php';
 
 use PhpOffice\PhpWord\PhpWord;
@@ -20,7 +25,7 @@ use PhpOffice\PhpWord\SimpleType\Jc;
 
 // Resolve DB path relative to this script so it works on any OS / machine.
 // Change this one line if your DB lives elsewhere.
-$dbFile = __DIR__ . '/assets/database/profile.db';
+$dbFile = __DIR__ . '/database/profile.db';
 
 // Fallback: allow override via env variable (useful for CI / Docker)
 if (getenv('RESUME_DB_PATH')) {
@@ -42,8 +47,6 @@ try {
 } catch (Exception $e) {
     die("DB connection failed: " . $e->getMessage());
 }
-
-$currentYear = (int)date('Y');
 
 $dateStr = date('d/m/Y');
 $footerText = "Generated with IDhwani by Deepak Kumar Vasudevan ('Lavanya Deepak') on $dateStr"; // Using your custom assistant name
@@ -115,6 +118,7 @@ foreach ($projects as &$project) {
 }
 unset($project);
 
+if ($isCli || $format === 'pdf') {
 // ====================== PDF via mPDF ======================
 
 $htmlFull = generateFullHTML($basics, $works, $educations, $skills, $projects, $awards, $certificates, $profiles);
@@ -142,16 +146,23 @@ try {
 
     $mpdf->SetHTMLFooter('<div style="text-align:center;font-size:9pt;color:#666;font-style:italic;">' . htmlspecialchars($footerText) . '</div>');
     $mpdf->WriteHTML($htmlFull);
-    $mpdf->Output($outputPdf, 'F');
-    echo "✅ PDF saved: $outputPdf\n";
+    
+    if ($isCli) {
+        $mpdf->Output($outputPdf, 'F');
+        echo "✅ PDF saved: $outputPdf\n";
+    } else {
+        $mpdf->Output($basics['name'] . '_Resume.pdf', 'D');
+        exit;
+    }
 } catch (Exception $e) {
-    echo "⚠️  PDF export failed: " . $e->getMessage() . "\n";
+    if ($isCli) echo "⚠️  PDF export failed: " . $e->getMessage() . "\n";
+}
 }
 
+if ($isCli || $format === 'docx') {
 // ====================== Word via native PHPWord API ======================
 // We avoid Html::addHtml() entirely because it silently drops most CSS.
 // Instead we build the document using PHPWord's object API for reliable output.
-
 try {
     $phpWord = new PhpWord();
 
@@ -379,14 +390,23 @@ $footer->addText(
 
     // ---- SAVE ----
     $writer = IOFactory::createWriter($phpWord, 'Word2007');
-    $writer->save($outputDocx);
-    echo "✅ Word saved: $outputDocx\n";
+    
+    if ($isCli) {
+        $writer->save($outputDocx);
+        echo "✅ Word saved: $outputDocx\n";
+    } else {
+        header("Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        header("Content-Disposition: attachment; filename=\"" . $basics['name'] . "_Resume.docx\"");
+        $writer->save('php://output');
+        exit;
+    }
 
 } catch (Exception $e) {
-    echo "⚠️  Word export failed: " . $e->getMessage() . "\n";
+    if ($isCli) echo "⚠️  Word export failed: " . $e->getMessage() . "\n";
+}
 }
 
-echo "\nDone. Open the files above to review your resume.\n";
+if ($isCli) echo "\nDone. Open the files above to review your resume.\n";
 
 // ====================== HELPERS ======================
 
